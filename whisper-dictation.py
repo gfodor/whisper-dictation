@@ -3,7 +3,6 @@ import time
 import threading
 import pyaudio
 import numpy as np
-from pynput import keyboard
 from whisper import load_model
 import platform
 import math
@@ -59,26 +58,21 @@ def play_tone(frequency, duration=0.067, volume=0.3):
 class SpeechTranscriber:
     def __init__(self, model):
         self.model = model
-        self.pykeyboard = keyboard.Controller()
 
     def transcribe(self, audio_data, language=None):
         result = self.model.transcribe(audio_data, language=language)
-        is_first = True
-        for element in result["text"]:
-            if is_first and element == " ":
-                is_first = False
-                continue
-            try:
-                self.pykeyboard.type(element)
-                time.sleep(0.0025)
-            except:
-                pass
-        print("Transcription complete.")
+        transcription_text = result["text"].lstrip() # Remove leading space if present
+        print(f"Transcription: {transcription_text}") # Log transcription
+        return transcription_text
+
+from pynput import keyboard # Add keyboard import here
+import time # Ensure time is imported if not already globally available for sleep
 
 class Recorder:
     def __init__(self, transcriber):
         self.recording = False
         self.transcriber = transcriber
+        self.pykeyboard = keyboard.Controller() # Add keyboard controller instance
 
     def start(self, language=None):
         thread = threading.Thread(target=self._record_impl, args=(language,))
@@ -108,7 +102,19 @@ class Recorder:
 
         audio_data = np.frombuffer(b''.join(frames), dtype=np.int16)
         audio_data_fp32 = audio_data.astype(np.float32) / 32768.0
-        self.transcriber.transcribe(audio_data_fp32, language)
+        # Get transcription text
+        transcription = self.transcriber.transcribe(audio_data_fp32, language)
+        # Type the transcription
+        if transcription:
+            try:
+                for element in transcription:
+                    self.pykeyboard.type(element)
+                    time.sleep(0.0025) # Keep the small delay
+                print("Typing complete.")
+            except Exception as e:
+                print(f"Error typing transcription: {e}")
+        else:
+            print("No transcription text to type.")
 
 class RecordingManager:
     def __init__(self, recorder, language, max_time):
@@ -227,6 +233,8 @@ def parse_args():
                         help='Specify the two-letter language code (e.g., "en" for English).')
     parser.add_argument('-t', '--max_time', type=float, default=30,
                         help='Maximum recording time in seconds.')
+    parser.add_argument('--audio_file', type=str, default=None,
+                       help='Path to an audio file (.wav or .webm) to transcribe directly. If provided, other options are ignored.')
     args = parser.parse_args()
 
     if args.language is not None:
@@ -236,10 +244,31 @@ def parse_args():
     return args
 
 if __name__ == "__main__":
+    args = parse_args()
+
+    # Check if transcribing a specific audio file (WAV or WEBM)
+    if args.audio_file:
+        print(f"Loading model ({args.model_name})...")
+        model = load_model(args.model_name)
+        print(f"{args.model_name} model loaded.")
+        language = args.language[0] if args.language else None
+        print(f"Transcribing file: {args.audio_file}...")
+        try:
+            result = model.transcribe(args.audio_file, language=language)
+            transcription = result["text"].lstrip()
+            print("\n--- Transcription ---")
+            print(transcription)
+            print("--- End Transcription ---\n")
+        except FileNotFoundError:
+            print(f"Error: Audio file not found at {args.audio_file}")
+        except Exception as e:
+            print(f"Error during transcription: {e}")
+        exit() # Exit after transcribing the file
+
+    # --- Original execution flow for live dictation ---
+
     # Play startup tone
     threading.Thread(target=play_tone, args=(800, 0.3, 0.5)).start()
-
-    args = parse_args()
 
     print("Loading model...")
     model = load_model(args.model_name)
